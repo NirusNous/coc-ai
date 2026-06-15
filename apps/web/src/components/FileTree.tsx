@@ -11,7 +11,7 @@ export function FileTree() {
 
       {files.length === 0 ? (
         <div className="emptyState">
-          Generated files will appear here in a later phase.
+          Generated files will appear here after the mock Code Generation Agent runs.
         </div>
       ) : (
         <ul className="fileList">

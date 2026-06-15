@@ -2,7 +2,9 @@ import { create } from "zustand";
 import type {
   AgentEvent,
   AgentStatus,
+  ArchitectureSpec,
   GeneratedFile,
+  RequirementsSpec,
   WorkflowResponse,
   WorkflowStatus
 } from "../types/workflow";
@@ -10,28 +12,28 @@ import type {
 function defaultAgentEvents(): AgentEvent[] {
   return [
     {
-      id: "prompt",
-      name: "Prompt Intake",
+      id: "requirements",
+      name: "Requirements Agent",
       status: "pending",
-      detail: "Waiting for a user prompt"
+      detail: "Waiting for prompt"
     },
     {
-      id: "api",
-      name: "FastAPI Backend",
+      id: "architecture",
+      name: "Architecture Agent",
       status: "pending",
-      detail: "Waiting for request"
+      detail: "Waiting for requirements"
     },
     {
-      id: "workflow",
-      name: "Workflow Engine",
+      id: "code",
+      name: "Code Generation Agent",
       status: "pending",
-      detail: "Phase 2 will run the workflow here"
+      detail: "Waiting for architecture"
     },
     {
       id: "preview",
       name: "Live Preview",
       status: "pending",
-      detail: "No generated app yet"
+      detail: "Preview comes in a later phase"
     }
   ];
 }
@@ -40,6 +42,8 @@ interface WorkflowStore {
   prompt: string;
   status: WorkflowStatus;
   workflowId?: string;
+  requirements?: RequirementsSpec;
+  architecture?: ArchitectureSpec;
   files: GeneratedFile[];
   logs: string[];
   previewUrl?: string;
@@ -63,8 +67,10 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
   prompt: "",
   status: "idle",
   workflowId: undefined,
+  requirements: undefined,
+  architecture: undefined,
   files: [],
-  logs: ["Phase 1 shell ready."],
+  logs: ["Phase 2 shell ready. Submit a prompt to run the mock workflow."],
   previewUrl: undefined,
   agentEvents: defaultAgentEvents(),
 
@@ -76,6 +82,8 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
     set({
       status: "idle",
       workflowId: undefined,
+      requirements: undefined,
+      architecture: undefined,
       files: [],
       logs: ["Workflow reset."],
       previewUrl: undefined,
@@ -107,71 +115,81 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
     set({
       status: "submitting",
       workflowId: undefined,
+      requirements: undefined,
+      architecture: undefined,
       files: [],
       previewUrl: undefined,
       logs: ["Submitting prompt to FastAPI..."],
-      agentEvents: defaultAgentEvents().map((agent) => {
-        if (agent.id === "prompt") {
-          return {
-            ...agent,
-            status: "completed",
-            detail: "Prompt captured by the UI"
-          };
+      agentEvents: [
+        {
+          id: "requirements",
+          name: "Requirements Agent",
+          status: "running",
+          detail: "Preparing to extract requirements"
+        },
+        {
+          id: "architecture",
+          name: "Architecture Agent",
+          status: "pending",
+          detail: "Waiting for requirements"
+        },
+        {
+          id: "code",
+          name: "Code Generation Agent",
+          status: "pending",
+          detail: "Waiting for architecture"
+        },
+        {
+          id: "preview",
+          name: "Live Preview",
+          status: "pending",
+          detail: "Preview comes in a later phase"
         }
-
-        if (agent.id === "api") {
-          return {
-            ...agent,
-            status: "running",
-            detail: "Sending request to backend"
-          };
-        }
-
-        return agent;
-      })
+      ]
     });
   },
 
   workflowStarted: (response) => {
     set((state) => ({
-      status: "started",
+      status: "completed",
       workflowId: response.workflowId,
-      files: response.files ?? [],
-      previewUrl: response.previewUrl,
+      requirements: response.requirements,
+      architecture: response.architecture,
+      files: response.files,
+      previewUrl: response.previewUrl ?? undefined,
       logs: [
         ...state.logs,
-        `Workflow ${response.workflowId} started.`,
-        `Prompt: ${response.prompt}`
+        ...response.logs,
+        `Returned ${response.files.length} generated files to the UI.`
       ],
-      agentEvents: state.agentEvents.map((agent) => {
-        if (agent.id === "api") {
-          return {
-            ...agent,
-            status: "completed",
-            detail: "FastAPI accepted the prompt"
-          };
+      agentEvents: [
+        {
+          id: "requirements",
+          name: "Requirements Agent",
+          status: "completed",
+          detail: `${response.requirements.features.length} features identified`
+        },
+        {
+          id: "architecture",
+          name: "Architecture Agent",
+          status: "completed",
+          detail: `${response.architecture.components.length} components planned`
+        },
+        {
+          id: "code",
+          name: "Code Generation Agent",
+          status: "completed",
+          detail: `${response.files.length} files generated in memory`
+        },
+        {
+          id: "preview",
+          name: "Live Preview",
+          status: response.previewUrl ? "completed" : "pending",
+          detail: response.previewUrl
+            ? "Preview URL received"
+            : "Preview will be added after local runner phase"
         }
-
-        if (agent.id === "workflow") {
-          return {
-            ...agent,
-            status: "completed",
-            detail: "Workflow placeholder created"
-          };
-        }
-
-        if (agent.id === "preview") {
-          return {
-            ...agent,
-            status: response.previewUrl ? "completed" : "pending",
-            detail: response.previewUrl
-              ? "Preview URL received"
-              : "Preview will be added in a later phase"
-          };
-        }
-
-        return agent;
-      })
+      ]
     }));
   },
 
@@ -180,7 +198,7 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
       status: "failed",
       logs: [...state.logs, `Error: ${message}`],
       agentEvents: state.agentEvents.map((agent) =>
-        agent.id === "api"
+        agent.status === "running"
           ? {
               ...agent,
               status: "failed",

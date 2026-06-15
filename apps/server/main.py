@@ -2,10 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models import WorkflowRequest, WorkflowResponse
-from app.workflow import run_mock_workflow
+from app.workflows.workflow_engine import WorkflowEngine
 
 
 app = FastAPI(title="Agentic OS API")
+workflow_engine = WorkflowEngine()
 
 
 app.add_middleware(
@@ -30,4 +31,4 @@ async def health():
 
 @app.post("/api/workflows", response_model=WorkflowResponse)
 async def create_workflow(request: WorkflowRequest):
-    return run_mock_workflow(request.prompt)
+    return await workflow_engine.run(request.prompt)

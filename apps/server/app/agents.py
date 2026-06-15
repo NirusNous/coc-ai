@@ -3,7 +3,7 @@ import json
 from app.models import (
     ArchitectureSpec,
     ComponentSpec,
-    DataFieldSpec,
+    FieldSpec,
     DataModelSpec,
     GeneratedFile,
     RequirementsSpec,
@@ -66,9 +66,9 @@ def architecture_agent(
             DataModelSpec(
                 name="Task",
                 fields=[
-                    DataFieldSpec(name="id", type="string", required=True),
-                    DataFieldSpec(name="title", type="string", required=True),
-                    DataFieldSpec(name="completed", type="boolean", required=True),
+                    FieldSpec(name="id", type="string", required=True),
+                    FieldSpec(name="title", type="string", required=True),
+                    FieldSpec(name="completed", type="boolean", required=True),
                 ],
             )
         ],
@@ -162,7 +162,7 @@ export default defineConfig({
             content="""import React from "react";
 import ReactDOM from "react-dom/client";
 import App from "./App";
-import "./App.css";
+import "./styles.css";
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>
@@ -277,7 +277,7 @@ export default App;
 """,
         ),
         GeneratedFile(
-            path="src/App.css",
+            path="src/styles.css",
             content="""* {
   box-sizing: border-box;
 }

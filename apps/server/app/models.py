@@ -1,13 +1,8 @@
-from pydantic import BaseModel, Field
+from pydantic import BaseModel
 
 
 class WorkflowRequest(BaseModel):
-    prompt: str = Field(min_length=1)
-
-
-class GeneratedFile(BaseModel):
-    path: str
-    content: str
+    prompt: str
 
 
 class RequirementsSpec(BaseModel):
@@ -20,8 +15,8 @@ class RequirementsSpec(BaseModel):
 class StackSpec(BaseModel):
     frontend: str
     language: str
-    buildTool: str
     styling: str
+    buildTool: str
     stateManagement: str
 
 
@@ -30,7 +25,7 @@ class ComponentSpec(BaseModel):
     responsibility: str
 
 
-class DataFieldSpec(BaseModel):
+class FieldSpec(BaseModel):
     name: str
     type: str
     required: bool
@@ -38,13 +33,23 @@ class DataFieldSpec(BaseModel):
 
 class DataModelSpec(BaseModel):
     name: str
-    fields: list[DataFieldSpec]
+    fields: list[FieldSpec]
 
 
 class ArchitectureSpec(BaseModel):
     stack: StackSpec
     components: list[ComponentSpec]
     dataModels: list[DataModelSpec]
+
+
+class GeneratedFile(BaseModel):
+    path: str
+    content: str
+
+
+class FileWriteResult(BaseModel):
+    workspacePath: str
+    writtenFiles: list[str]
 
 
 class WorkflowResponse(BaseModel):
@@ -56,3 +61,4 @@ class WorkflowResponse(BaseModel):
     files: list[GeneratedFile]
     logs: list[str]
     previewUrl: str | None = None
+    workspacePath: str | None = None

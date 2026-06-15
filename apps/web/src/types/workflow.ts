@@ -2,6 +2,8 @@ export type WorkflowStatus =
   | "idle"
   | "submitting"
   | "started"
+  | "code_generated"
+  | "files_written"
   | "preview_ready"
   | "completed"
   | "failed";
@@ -19,11 +21,6 @@ export interface AgentEvent {
   detail: string;
 }
 
-export interface GeneratedFile {
-  path: string;
-  content: string;
-}
-
 export interface RequirementsSpec {
   appName: string;
   summary: string;
@@ -34,8 +31,8 @@ export interface RequirementsSpec {
 export interface StackSpec {
   frontend: string;
   language: string;
-  buildTool: string;
   styling: string;
+  buildTool: string;
   stateManagement: string;
 }
 
@@ -44,7 +41,7 @@ export interface ComponentSpec {
   responsibility: string;
 }
 
-export interface DataFieldSpec {
+export interface FieldSpec {
   name: string;
   type: string;
   required: boolean;
@@ -52,7 +49,7 @@ export interface DataFieldSpec {
 
 export interface DataModelSpec {
   name: string;
-  fields: DataFieldSpec[];
+  fields: FieldSpec[];
 }
 
 export interface ArchitectureSpec {
@@ -61,13 +58,19 @@ export interface ArchitectureSpec {
   dataModels: DataModelSpec[];
 }
 
+export interface GeneratedFile {
+  path: string;
+  content: string;
+}
+
 export interface WorkflowResponse {
   workflowId: string;
-  status: string;
+  status: WorkflowStatus;
   prompt: string;
   requirements: RequirementsSpec;
   architecture: ArchitectureSpec;
   files: GeneratedFile[];
   logs: string[];
   previewUrl?: string | null;
+  workspacePath?: string | null;
 }

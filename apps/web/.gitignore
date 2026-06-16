@@ -1,24 +1,65 @@
-# Logs
-logs
-*.log
+# -----------------------------
+# Node / React / Vite
+# -----------------------------
+node_modules/
+**/node_modules/
+
+dist/
+build/
+.vite/
+coverage/
+
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
-lerna-debug.log*
 
-node_modules
-dist
-dist-ssr
-*.local
+# Keep lockfiles committed
+# Do NOT ignore pnpm-lock.yaml
+# Do NOT ignore package-lock.json
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+
+# -----------------------------
+# Python / FastAPI
+# -----------------------------
+__pycache__/
+**/__pycache__/
+
+*.py[cod]
+*$py.class
+
+.venv/
+venv/
+env/
+ENV/
+
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+
+# -----------------------------
+# Environment files
+# -----------------------------
+.env
+.env.*
+!.env.example
+
+
+# -----------------------------
+# Agentic OS generated apps
+# -----------------------------
+generated/*
+!generated/.gitkeep
+
+
+# -----------------------------
+# Editor / OS files
+# -----------------------------
+.vscode/
+.idea/
+
 .DS_Store
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+Thumbs.db

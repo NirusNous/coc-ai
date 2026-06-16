@@ -1,12 +1,11 @@
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.models import WorkflowRequest, WorkflowResponse
-from app.workflows.workflow_engine import WorkflowEngine
+from app.workflow import run_mock_workflow
 
 
 app = FastAPI(title="Agentic OS API")
-workflow_engine = WorkflowEngine()
 
 
 app.add_middleware(
@@ -22,7 +21,7 @@ app.add_middleware(
 
 
 @app.get("/health")
-async def health():
+def health():
     return {
         "status": "ok",
         "service": "agentic-os-api",
@@ -30,5 +29,9 @@ async def health():
 
 
 @app.post("/api/workflows", response_model=WorkflowResponse)
-async def create_workflow(request: WorkflowRequest):
-    return await workflow_engine.run(request.prompt)
+def create_workflow(request: WorkflowRequest):
+    prompt = request.prompt.strip()
+
+    if not prompt:
+        raise HTTPException(status_code=400, detail="Prompt is required.")
+    return run_mock_workflow(prompt)

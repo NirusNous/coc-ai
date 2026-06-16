@@ -61,4 +61,5 @@ class WorkflowResponse(BaseModel):
     files: list[GeneratedFile]
     logs: list[str]
     previewUrl: str | None = None
+    previewPort: int | None = None
     workspacePath: str | None = None

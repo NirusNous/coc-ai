@@ -30,10 +30,8 @@ export interface RequirementsSpec {
 
 export interface StackSpec {
   frontend: string;
-  language: string;
   styling: string;
   buildTool: string;
-  stateManagement: string;
 }
 
 export interface ComponentSpec {
@@ -72,5 +70,6 @@ export interface WorkflowResponse {
   files: GeneratedFile[];
   logs: string[];
   previewUrl?: string | null;
+  previewPort?: number | null;
   workspacePath?: string | null;
 }

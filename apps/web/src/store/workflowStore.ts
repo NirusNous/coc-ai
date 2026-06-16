@@ -79,6 +79,7 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
   files: [],
   logs: ["Phase 3 shell ready."],
   previewUrl: undefined,
+  previewPort: undefined,
   workspacePath: undefined,
   agentEvents: defaultAgentEvents(),
 

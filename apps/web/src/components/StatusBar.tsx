@@ -4,6 +4,7 @@ export function StatusBar() {
   const status = useWorkflowStore((state) => state.status);
   const workflowId = useWorkflowStore((state) => state.workflowId);
   const workspacePath = useWorkflowStore((state) => state.workspacePath);
+  const previewUrl = useWorkflowStore((state) => state.previewUrl);
 
   return (
     <section className="statusBar">
@@ -20,6 +21,11 @@ export function StatusBar() {
       <div>
         <span className="statusLabel">Workspace</span>
         <strong>{workspacePath ?? "not created"}</strong>
+      </div>
+
+      <div>
+        <span className="statusLabel">Preview</span>
+        <strong>{previewUrl ?? "not running"}</strong>
       </div>
     </section>
   );

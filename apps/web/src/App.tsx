@@ -1,10 +1,13 @@
+import { AttemptHistory } from "./components/AttemptHistory";
 import { AgentTimeline } from "./components/AgentTimeline";
-import { BuildLogs } from "./components/BuildLogs";
 import { FileTree } from "./components/FileTree";
+import { LogsPanel } from "./components/LogsPanel";
 import { PlanSummary } from "./components/PlanSummary";
 import { PreviewPane } from "./components/PreviewPane";
+import { ProjectSidebar } from "./components/ProjectSidebar";
 import { PromptBar } from "./components/PromptBar";
 import { StatusBar } from "./components/StatusBar";
+import { WorkflowHistory } from "./components/WorkflowHistory";
 import "./App.css";
 
 function App() {
@@ -15,8 +18,11 @@ function App() {
 
       <section className="workspaceGrid">
         <div className="leftColumn">
+          <ProjectSidebar />
           <AgentTimeline />
-          <BuildLogs />
+          <AttemptHistory />
+          <WorkflowHistory />
+          <LogsPanel />
         </div>
 
         <div className="middleColumn">

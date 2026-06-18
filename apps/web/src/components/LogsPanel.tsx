@@ -1,10 +1,10 @@
 import { useWorkflowStore } from "../store/workflowStore";
 
-export function BuildLogs() {
+export function LogsPanel() {
   const logs = useWorkflowStore((state) => state.logs);
 
   return (
-    <section className="panel buildLogs">
+    <section className="panel logsPanel">
       <div className="panelHeader">
         <h2>Logs</h2>
       </div>

@@ -1,17 +1,31 @@
+import { useRef } from "react";
 import type { FormEvent } from "react";
 import { createWorkflow } from "../api/workflows";
+import { connectWorkflowSocket } from "../api/workflowSocket";
 import { useWorkflowStore } from "../store/workflowStore";
 
 export function PromptBar() {
+  const socketCleanupRef = useRef<null | (() => void)>(null);
+
   const prompt = useWorkflowStore((state) => state.prompt);
   const status = useWorkflowStore((state) => state.status);
+  const selectedProjectId = useWorkflowStore(
+    (state) => state.selectedProjectId
+  );
   const setPrompt = useWorkflowStore((state) => state.setPrompt);
   const beginSubmission = useWorkflowStore((state) => state.beginSubmission);
-  const workflowStarted = useWorkflowStore((state) => state.workflowStarted);
+  const workflowQueued = useWorkflowStore((state) => state.workflowQueued);
+  const handleWorkflowEvent = useWorkflowStore(
+    (state) => state.handleWorkflowEvent
+  );
   const failWorkflow = useWorkflowStore((state) => state.failWorkflow);
   const resetWorkflow = useWorkflowStore((state) => state.resetWorkflow);
 
-  const isSubmitting = status === "submitting";
+  const isSubmitting =
+    status === "submitting" ||
+    status === "queued" ||
+    status === "running" ||
+    status === "awaiting_approval";
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -21,24 +35,47 @@ export function PromptBar() {
       return;
     }
 
+    if (!selectedProjectId) {
+      failWorkflow("Select a project before starting a workflow.");
+      return;
+    }
+
     beginSubmission();
 
     try {
-      const response = await createWorkflow(prompt);
-      workflowStarted(response);
+      const response = await createWorkflow(prompt, selectedProjectId);
+
+      workflowQueued(response);
+
+      socketCleanupRef.current?.();
+
+      socketCleanupRef.current = connectWorkflowSocket(
+        response.workflowId,
+        handleWorkflowEvent,
+        failWorkflow
+      );
     } catch (error) {
       failWorkflow(error instanceof Error ? error.message : String(error));
     }
+  }
+
+  function handleReset() {
+    socketCleanupRef.current?.();
+    socketCleanupRef.current = null;
+    resetWorkflow();
   }
 
   return (
     <section className="promptPanel">
       <div>
         <p className="eyebrow">Agentic OS</p>
-        <h1>Prompt-to-Preview Factory</h1>
+        <h1>App Generation Workspace</h1>
         <p className="subtitle">
-          Describe an app. The system will eventually generate files, run the
-          app, and show a live preview.
+          Describe the product you want to build. The system will plan it,
+          generate the client app, and stream progress as the preview comes up.
+        </p>
+        <p className="selectedProjectBadge">
+          Project: {selectedProjectId ?? "none selected"}
         </p>
       </div>
 
@@ -46,15 +83,19 @@ export function PromptBar() {
         <textarea
           value={prompt}
           onChange={(event) => setPrompt(event.target.value)}
-          placeholder="Example: Build a task manager app with add, complete, and delete task functionality."
+          placeholder="Example: Build a customer feedback dashboard with filters, record detail editing, and local persistence."
         />
 
         <div className="promptActions">
           <button type="submit" disabled={isSubmitting}>
-            {isSubmitting ? "Starting..." : "Start Workflow"}
+            {isSubmitting ? "Running..." : "Start Workflow"}
           </button>
 
-          <button type="button" className="secondaryButton" onClick={resetWorkflow}>
+          <button
+            type="button"
+            className="secondaryButton"
+            onClick={handleReset}
+          >
             Reset
           </button>
         </div>

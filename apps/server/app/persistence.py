@@ -153,7 +153,7 @@ def init_database() -> None:
         _ensure_column(
             connection,
             "workflows",
-            "max_attempts INTEGER NOT NULL DEFAULT 1",
+            "max_attempts INTEGER NOT NULL DEFAULT 3",
         )
         _ensure_column(
             connection,
@@ -183,7 +183,7 @@ def create_workflow_record(
     status: str,
     *,
     current_attempt: int = 1,
-    max_attempts: int = 1,
+    max_attempts: int = 3,
     is_retrying: bool = False,
 ) -> None:
     timestamp = _now_iso()
@@ -233,7 +233,6 @@ def create_workflow_record(
 def update_workflow_record(
     workflow_id: str,
     *,
-    project_id: str | object = _UNSET,
     prompt: str | object = _UNSET,
     status: str | object = _UNSET,
     requirements: dict | None | object = _UNSET,
@@ -249,10 +248,6 @@ def update_workflow_record(
     if prompt is not _UNSET:
         assignments.append("prompt = ?")
         values.append(prompt)
-
-    if project_id is not _UNSET:
-        assignments.append("project_id = ?")
-        values.append(project_id)
 
     if status is not _UNSET:
         assignments.append("status = ?")
@@ -480,196 +475,27 @@ def set_preview_metadata(
         )
 
 
-def create_project_record(
-    project_id: str,
-    name: str,
-    description: str | None = None,
-) -> None:
-    timestamp = _now_iso()
-
-    with _connect() as connection:
-        connection.execute(
-            """
-            INSERT INTO projects (
-                project_id,
-                name,
-                description,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, ?, ?, ?)
-            """,
-            (
-                project_id,
-                name,
-                description,
-                timestamp,
-                timestamp,
-            ),
-        )
-
-
-def update_project_record(
-    project_id: str,
-    *,
-    name: str | object = _UNSET,
-    description: str | None | object = _UNSET,
-) -> None:
-    assignments: list[str] = ["updated_at = ?"]
-    values: list[object] = [_now_iso()]
-
-    if name is not _UNSET:
-        assignments.append("name = ?")
-        values.append(name)
-
-    if description is not _UNSET:
-        assignments.append("description = ?")
-        values.append(description)
-
-    values.append(project_id)
-
-    with _connect() as connection:
-        connection.execute(
-            f"""
-            UPDATE projects
-            SET {", ".join(assignments)}
-            WHERE project_id = ?
-            """,
-            values,
-        )
-
-
-def delete_project_record(project_id: str) -> None:
-    with _connect() as connection:
-        connection.execute(
-            "DELETE FROM workflows WHERE project_id = ?",
-            (project_id,),
-        )
-        connection.execute(
-            "DELETE FROM projects WHERE project_id = ?",
-            (project_id,),
-        )
-
-
-def list_project_records() -> list[dict]:
+def list_workflow_records() -> list[dict]:
     with _connect() as connection:
         rows = connection.execute(
             """
             SELECT
-                projects.project_id,
-                projects.name,
-                projects.description,
-                projects.created_at,
-                projects.updated_at,
-                COUNT(workflows.workflow_id) AS workflow_count
-            FROM projects
-            LEFT JOIN workflows
-                ON workflows.project_id = projects.project_id
-            GROUP BY
-                projects.project_id,
-                projects.name,
-                projects.description,
-                projects.created_at,
-                projects.updated_at
-            ORDER BY projects.updated_at DESC, projects.created_at DESC
+                workflows.workflow_id,
+                workflows.prompt,
+                workflows.status,
+                workflows.created_at,
+                workflows.updated_at,
+                preview_metadata.workspace_path,
+                preview_metadata.preview_url
+            FROM workflows
+            LEFT JOIN preview_metadata
+                ON preview_metadata.workflow_id = workflows.workflow_id
+            ORDER BY workflows.updated_at DESC, workflows.created_at DESC
             """
         ).fetchall()
 
     return [
         {
-            "projectId": row["project_id"],
-            "name": row["name"],
-            "description": row["description"],
-            "workflowCount": row["workflow_count"],
-            "createdAt": row["created_at"],
-            "updatedAt": row["updated_at"],
-        }
-        for row in rows
-    ]
-
-
-def get_project_record(project_id: str) -> dict | None:
-    with _connect() as connection:
-        row = connection.execute(
-            """
-            SELECT
-                projects.project_id,
-                projects.name,
-                projects.description,
-                projects.created_at,
-                projects.updated_at,
-                COUNT(workflows.workflow_id) AS workflow_count
-            FROM projects
-            LEFT JOIN workflows
-                ON workflows.project_id = projects.project_id
-            WHERE projects.project_id = ?
-            GROUP BY
-                projects.project_id,
-                projects.name,
-                projects.description,
-                projects.created_at,
-                projects.updated_at
-            """,
-            (project_id,),
-        ).fetchone()
-
-    if row is None:
-        return None
-
-    return {
-        "projectId": row["project_id"],
-        "name": row["name"],
-        "description": row["description"],
-        "workflowCount": row["workflow_count"],
-        "createdAt": row["created_at"],
-        "updatedAt": row["updated_at"],
-    }
-
-
-def list_workflow_records(project_id: str | None = None) -> list[dict]:
-    with _connect() as connection:
-        if project_id is None:
-            rows = connection.execute(
-                """
-            SELECT
-                workflows.workflow_id,
-                workflows.project_id,
-                workflows.prompt,
-                workflows.status,
-                workflows.created_at,
-                workflows.updated_at,
-                preview_metadata.workspace_path,
-                preview_metadata.preview_url
-            FROM workflows
-            LEFT JOIN preview_metadata
-                ON preview_metadata.workflow_id = workflows.workflow_id
-            ORDER BY workflows.updated_at DESC, workflows.created_at DESC
-                """
-            ).fetchall()
-        else:
-            rows = connection.execute(
-                """
-            SELECT
-                workflows.workflow_id,
-                workflows.project_id,
-                workflows.prompt,
-                workflows.status,
-                workflows.created_at,
-                workflows.updated_at,
-                preview_metadata.workspace_path,
-                preview_metadata.preview_url
-            FROM workflows
-            LEFT JOIN preview_metadata
-                ON preview_metadata.workflow_id = workflows.workflow_id
-            WHERE workflows.project_id = ?
-            ORDER BY workflows.updated_at DESC, workflows.created_at DESC
-                """,
-                (project_id,),
-            ).fetchall()
-
-    return [
-        {
-            "projectId": row["project_id"],
             "workflowId": row["workflow_id"],
             "prompt": row["prompt"],
             "status": row["status"],
@@ -753,7 +579,6 @@ def get_workflow_record(workflow_id: str) -> dict | None:
     architecture_json = workflow_row["architecture_json"]
 
     return {
-        "projectId": workflow_row["project_id"],
         "workflowId": workflow_row["workflow_id"],
         "status": workflow_row["status"],
         "prompt": workflow_row["prompt"],

@@ -10,6 +10,9 @@ export function PreviewPane() {
   const previewUrl = useWorkflowStore((state) => state.previewUrl);
   const workspacePath = useWorkflowStore((state) => state.workspacePath);
   const status = useWorkflowStore((state) => state.status);
+  const currentAttempt = useWorkflowStore((state) => state.currentAttempt);
+  const maxAttempts = useWorkflowStore((state) => state.maxAttempts);
+  const isRetrying = useWorkflowStore((state) => state.isRetrying);
   const previewAction = useWorkflowStore((state) => state.previewAction);
   const beginPreviewAction = useWorkflowStore(
     (state) => state.beginPreviewAction
@@ -69,7 +72,10 @@ export function PreviewPane() {
   let placeholderBody =
     "The active preview runner will render the generated app here.";
 
-  if (status === "awaiting_approval") {
+  if (isRetrying) {
+    placeholderTitle = "Self-healing in progress";
+    placeholderBody = `Retrying attempt ${currentAttempt}/${maxAttempts}. Check the logs for the latest debug and patch activity.`;
+  } else if (status === "awaiting_approval") {
     placeholderTitle = "Awaiting architecture approval";
     placeholderBody =
       "The workflow is paused before code generation. Review the plan summary and approve it or request changes.";
@@ -95,7 +101,7 @@ export function PreviewPane() {
   } else if (status === "failed") {
     placeholderTitle = "Workflow failed";
     placeholderBody =
-      "The workflow ended before the preview became ready. Check the latest logs and attempt history.";
+      "The self-healing loop was not able to complete successfully. Check the latest logs and attempt history.";
   } else if (status === "preview_stopped") {
     placeholderTitle = "Preview stopped";
     placeholderBody = "Use Restart Preview to bring the generated app back.";

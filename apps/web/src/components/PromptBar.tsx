@@ -9,9 +9,6 @@ export function PromptBar() {
 
   const prompt = useWorkflowStore((state) => state.prompt);
   const status = useWorkflowStore((state) => state.status);
-  const selectedProjectId = useWorkflowStore(
-    (state) => state.selectedProjectId
-  );
   const setPrompt = useWorkflowStore((state) => state.setPrompt);
   const beginSubmission = useWorkflowStore((state) => state.beginSubmission);
   const workflowQueued = useWorkflowStore((state) => state.workflowQueued);
@@ -35,15 +32,10 @@ export function PromptBar() {
       return;
     }
 
-    if (!selectedProjectId) {
-      failWorkflow("Select a project before starting a workflow.");
-      return;
-    }
-
     beginSubmission();
 
     try {
-      const response = await createWorkflow(prompt, selectedProjectId);
+      const response = await createWorkflow(prompt);
 
       workflowQueued(response);
 
@@ -73,9 +65,6 @@ export function PromptBar() {
         <p className="subtitle">
           Describe the product you want to build. The system will plan it,
           generate the client app, and stream progress as the preview comes up.
-        </p>
-        <p className="selectedProjectBadge">
-          Project: {selectedProjectId ?? "none selected"}
         </p>
       </div>
 

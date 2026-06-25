@@ -7,22 +7,13 @@ from uuid import uuid4
 from fastapi import BackgroundTasks, FastAPI, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.config import GENERATED_ROOT, PROJECT_ROOT, get_runner_settings
+from app.config import GENERATED_ROOT, PROJECT_ROOT
 from app.models import (
     ArchitectureSpec,
-    KubernetesNamespaceActionResponse,
-    KubernetesNamespaceInfo,
-    KubernetesNamespaceListResponse,
     PreviewActionResponse,
     PreviewInfo,
     PreviewListResponse,
-    ProjectActionResponse,
-    ProjectListResponse,
-    ProjectRequest,
-    ProjectResponse,
-    ProjectUpdateRequest,
     RequirementsSpec,
-    RunnerConfigResponse,
     WorkflowActionResponse,
     WorkflowApprovalRequest,
     WorkflowChangeRequest,
@@ -35,24 +26,18 @@ from app.models import (
 from app.persistence import (
     DEFAULT_PROJECT_ID,
     append_workflow_log,
-    create_project_record,
     create_workflow_record,
-    delete_project_record,
-    get_project_record,
     get_workflow_record,
     init_database,
-    list_project_records,
     list_workflow_records,
     replace_generated_files,
     set_preview_metadata,
     upsert_build_attempt,
-    update_project_record,
     update_workflow_record,
 )
 from app.realtime import workflow_event_manager
-from app.runners.factory import get_preview_runner, get_rancher_k8s_runner
-from app.runners.rancher_k8s_runner import RancherKubernetesRunnerError
-from app.services.file_writer import build_workspace_dir, validate_project_id
+from app.runners.factory import get_preview_runner
+from app.services.file_writer import build_workspace_dir
 from app.workflow import (
     run_workflow_until_approval,
     run_workflow_after_approval,
@@ -88,81 +73,6 @@ async def health():
     }
 
 
-@app.get("/api/runner", response_model=RunnerConfigResponse)
-async def get_runner_config():
-    runner_settings = get_runner_settings()
-    return RunnerConfigResponse(
-        runner=runner_settings.runner,
-        kubeconfigPath=runner_settings.kubeconfig_path,
-        k8sContext=runner_settings.k8s_context,
-        namespacePrefix=runner_settings.namespace_prefix,
-        previewExposureMode=runner_settings.preview_exposure_mode,
-        previewBaseDomain=runner_settings.preview_base_domain,
-    )
-
-
-@app.get(
-    "/api/kubernetes/namespaces",
-    response_model=KubernetesNamespaceListResponse,
-)
-async def get_kubernetes_namespaces():
-    runner = get_rancher_k8s_runner()
-
-    try:
-        namespaces = await asyncio.to_thread(runner.list_namespaces)
-    except RancherKubernetesRunnerError as error:
-        raise _namespace_error_to_http_exception(error) from error
-
-    return KubernetesNamespaceListResponse(
-        namespaces=[
-            KubernetesNamespaceInfo(
-                name=namespace.name,
-                status=namespace.status,
-                createdAt=namespace.created_at,
-            )
-            for namespace in namespaces
-        ]
-    )
-
-
-@app.post(
-    "/api/kubernetes/test-namespace",
-    response_model=KubernetesNamespaceActionResponse,
-)
-async def create_kubernetes_test_namespace():
-    runner = get_rancher_k8s_runner()
-
-    try:
-        namespace = await asyncio.to_thread(runner.create_test_namespace)
-    except RancherKubernetesRunnerError as error:
-        raise _namespace_error_to_http_exception(error) from error
-
-    return KubernetesNamespaceActionResponse(
-        namespace=namespace.name,
-        status="created",
-        message="Test namespace created.",
-    )
-
-
-@app.delete(
-    "/api/kubernetes/namespaces/{namespace}",
-    response_model=KubernetesNamespaceActionResponse,
-)
-async def delete_kubernetes_namespace(namespace: str):
-    runner = get_rancher_k8s_runner()
-
-    try:
-        await asyncio.to_thread(runner.delete_namespace, namespace)
-    except RancherKubernetesRunnerError as error:
-        raise _namespace_error_to_http_exception(error) from error
-
-    return KubernetesNamespaceActionResponse(
-        namespace=namespace,
-        status="deleted",
-        message="Namespace deletion requested.",
-    )
-
-
 def _validate_workflow_id(workflow_id: str) -> str:
     allowed_characters = set("abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-")
 
@@ -173,15 +83,6 @@ def _validate_workflow_id(workflow_id: str) -> str:
         raise HTTPException(status_code=400, detail="Invalid workflow ID.")
 
     return workflow_id
-
-
-def _validate_project_id_or_400(project_id: str) -> str:
-    try:
-        validate_project_id(project_id)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail=str(error)) from error
-
-    return project_id
 
 
 def _workspace_dir_from_relative_path(workspace_path: str) -> Path:
@@ -202,39 +103,19 @@ def _resolve_workspace_dir_for_workflow(workflow: dict) -> Path:
     if isinstance(workspace_path, str) and workspace_path.strip():
         return _workspace_dir_from_relative_path(workspace_path)
 
-    project_id = workflow.get("projectId")
     workflow_id = workflow.get("workflowId")
 
-    if not isinstance(project_id, str) or not isinstance(workflow_id, str):
+    if not isinstance(workflow_id, str):
         raise HTTPException(
             status_code=404,
             detail="Generated workspace not found for this workflow.",
         )
 
-    return build_workspace_dir(
-        project_id=project_id,
-        workflow_id=workflow_id,
-    )
+    return build_workspace_dir(workflow_id)
 
 
 def _workspace_path_for_response(workspace_dir: Path) -> str:
     return str(workspace_dir.relative_to(PROJECT_ROOT)).replace("\\", "/")
-
-
-def _namespace_error_to_http_exception(error: RancherKubernetesRunnerError) -> HTTPException:
-    detail = str(error)
-    lowered = detail.lower()
-
-    if "not found" in lowered:
-        return HTTPException(status_code=404, detail=detail)
-
-    if "already exists" in lowered or "alreadyexists" in lowered:
-        return HTTPException(status_code=409, detail=detail)
-
-    if "invalid namespace" in lowered or "namespace must use the configured prefix" in lowered:
-        return HTTPException(status_code=400, detail=detail)
-
-    return HTTPException(status_code=503, detail=detail)
 
 
 def _persist_workflow_event(
@@ -246,11 +127,10 @@ def _persist_workflow_event(
     if event_type == "workflow:started":
         update_workflow_record(
             workflow_id,
-            project_id=payload.get("projectId"),
             status=payload.get("status", "running"),
             approval_stage=payload.get("approvalStage"),
             current_attempt=payload.get("currentAttempt", 1),
-            max_attempts=payload.get("maxAttempts", 1),
+            max_attempts=payload.get("maxAttempts", 3),
             is_retrying=payload.get("isRetrying", False),
         )
         return
@@ -292,7 +172,7 @@ def _persist_workflow_event(
             status="running",
             approval_stage=None,
             current_attempt=payload.get("attemptNumber", 1),
-            max_attempts=payload.get("maxAttempts", 1),
+            max_attempts=payload.get("maxAttempts", 3),
             is_retrying=payload.get("isRetrying", False),
         )
         return
@@ -310,22 +190,31 @@ def _persist_workflow_event(
                 if isinstance(attempt, dict)
                 else payload.get("currentAttempt", 1)
             ),
-            max_attempts=payload.get("maxAttempts", 1),
+            max_attempts=payload.get("maxAttempts", 3),
             is_retrying=payload.get("willRetry", False),
+        )
+        return
+
+    if event_type == "attempt:retrying":
+        update_workflow_record(
+            workflow_id,
+            status="running",
+            current_attempt=payload.get("nextAttemptNumber", 1),
+            max_attempts=payload.get("maxAttempts", 3),
+            is_retrying=True,
         )
         return
 
     if event_type == "workflow:awaiting_approval":
         update_workflow_record(
             workflow_id,
-            project_id=payload.get("projectId"),
             prompt=payload.get("prompt"),
             status=payload.get("status", "awaiting_approval"),
             requirements=payload.get("requirements"),
             architecture=payload.get("architecture"),
             approval_stage=payload.get("approvalStage"),
             current_attempt=payload.get("currentAttempt", 1),
-            max_attempts=payload.get("maxAttempts", 1),
+            max_attempts=payload.get("maxAttempts", 3),
             is_retrying=payload.get("isRetrying", False),
         )
         return
@@ -410,14 +299,13 @@ def _persist_workflow_event(
     if event_type == "workflow:completed":
         update_workflow_record(
             workflow_id,
-            project_id=payload.get("projectId"),
             prompt=payload.get("prompt"),
             status=payload.get("status", "completed"),
             requirements=payload.get("requirements"),
             architecture=payload.get("architecture"),
             approval_stage=payload.get("approvalStage"),
             current_attempt=payload.get("currentAttempt", 1),
-            max_attempts=payload.get("maxAttempts", 1),
+            max_attempts=payload.get("maxAttempts", 3),
             is_retrying=payload.get("isRetrying", False),
         )
 
@@ -510,13 +398,11 @@ async def _run_persisted_workflow_task(
 
 async def run_workflow_background(
     workflow_id: str,
-    project_id: str,
     prompt: str,
 ) -> None:
     async def task(publish: PublishWorkflowEvent) -> None:
         await run_workflow_until_approval(
             prompt=prompt,
-            project_id=project_id,
             workflow_id=workflow_id,
             publish=publish,
         )
@@ -526,7 +412,6 @@ async def run_workflow_background(
 
 async def run_approved_workflow_background(
     workflow_id: str,
-    project_id: str,
     prompt: str,
     requirements: dict,
     architecture: dict,
@@ -535,7 +420,6 @@ async def run_approved_workflow_background(
     async def task(publish: PublishWorkflowEvent) -> None:
         await run_workflow_after_approval(
             prompt=prompt,
-            project_id=project_id,
             workflow_id=workflow_id,
             requirements=RequirementsSpec(**requirements),
             architecture=ArchitectureSpec(**architecture),
@@ -548,7 +432,6 @@ async def run_approved_workflow_background(
 
 async def run_change_request_background(
     workflow_id: str,
-    project_id: str,
     prompt: str,
     change_scope: str,
     change_feedback: str,
@@ -557,7 +440,6 @@ async def run_change_request_background(
     async def task(publish: PublishWorkflowEvent) -> None:
         await run_workflow_after_change_request(
             prompt=prompt,
-            project_id=project_id,
             workflow_id=workflow_id,
             change_scope=change_scope,
             change_feedback=change_feedback,
@@ -578,7 +460,6 @@ async def create_workflow(
     background_tasks: BackgroundTasks,
 ):
     prompt = request.prompt.strip()
-    project_id = _validate_project_id_or_400(request.projectId)
 
     if not prompt:
         raise HTTPException(
@@ -586,15 +467,9 @@ async def create_workflow(
             detail="Prompt is required.",
         )
 
-    if get_project_record(project_id) is None:
-        raise HTTPException(
-            status_code=404,
-            detail="Project not found.",
-        )
-
     workflow_id = f"workflow_{uuid4().hex[:8]}"
     create_workflow_record(
-        project_id=project_id,
+        project_id=DEFAULT_PROJECT_ID,
         workflow_id=workflow_id,
         prompt=prompt,
         status="queued",
@@ -603,152 +478,12 @@ async def create_workflow(
     background_tasks.add_task(
         run_workflow_background,
         workflow_id,
-        project_id,
         prompt,
     )
 
     return WorkflowStartResponse(
-        projectId=project_id,
         workflowId=workflow_id,
         status="queued",
-    )
-
-
-@app.get("/api/projects", response_model=ProjectListResponse)
-async def get_projects():
-    projects = list_project_records()
-
-    return ProjectListResponse(
-        projects=[ProjectResponse(**project) for project in projects],
-    )
-
-
-@app.post("/api/projects", response_model=ProjectResponse)
-async def create_project(request: ProjectRequest):
-    name = request.name.strip()
-
-    if not name:
-        raise HTTPException(status_code=400, detail="Project name is required.")
-
-    project_id = f"project_{uuid4().hex[:8]}"
-    create_project_record(
-        project_id=project_id,
-        name=name,
-        description=(
-            request.description.strip()
-            if isinstance(request.description, str) and request.description.strip()
-            else None
-        ),
-    )
-    project = get_project_record(project_id)
-
-    if project is None:
-        raise HTTPException(status_code=500, detail="Project could not be created.")
-
-    return ProjectResponse(**project)
-
-
-@app.get("/api/projects/{project_id}", response_model=ProjectResponse)
-async def get_project(project_id: str):
-    _validate_project_id_or_400(project_id)
-    project = get_project_record(project_id)
-
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found.")
-
-    return ProjectResponse(**project)
-
-
-@app.patch("/api/projects/{project_id}", response_model=ProjectResponse)
-async def update_project(project_id: str, request: ProjectUpdateRequest):
-    _validate_project_id_or_400(project_id)
-    project = get_project_record(project_id)
-
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found.")
-
-    name = request.name.strip() if isinstance(request.name, str) else None
-    description = (
-        request.description.strip()
-        if isinstance(request.description, str) and request.description.strip()
-        else None
-    )
-
-    if request.name is not None and not name:
-        raise HTTPException(status_code=400, detail="Project name cannot be empty.")
-
-    update_kwargs: dict[str, str | None] = {}
-
-    if request.name is not None:
-        update_kwargs["name"] = name
-
-    if request.description is not None:
-        update_kwargs["description"] = description
-
-    update_project_record(
-        project_id,
-        **update_kwargs,
-    )
-    updated_project = get_project_record(project_id)
-
-    if updated_project is None:
-        raise HTTPException(status_code=500, detail="Project could not be updated.")
-
-    return ProjectResponse(**updated_project)
-
-
-@app.delete("/api/projects/{project_id}", response_model=ProjectActionResponse)
-async def delete_project(project_id: str):
-    _validate_project_id_or_400(project_id)
-
-    if project_id == DEFAULT_PROJECT_ID:
-        raise HTTPException(
-            status_code=409,
-            detail="The default project cannot be deleted.",
-        )
-
-    project = get_project_record(project_id)
-
-    if project is None:
-        raise HTTPException(status_code=404, detail="Project not found.")
-
-    project_workflows = list_workflow_records(project_id=project_id)
-    preview_runner = get_preview_runner()
-
-    for workflow in project_workflows:
-        await asyncio.to_thread(preview_runner.stop_preview, workflow["workflowId"])
-
-        workspace_path = workflow.get("workspacePath")
-
-        if isinstance(workspace_path, str) and workspace_path.strip():
-            workspace_dir = _workspace_dir_from_relative_path(workspace_path)
-
-            if workspace_dir.exists():
-                try:
-                    await asyncio.to_thread(shutil.rmtree, workspace_dir)
-                except OSError as error:
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Failed to remove workspace: {error}",
-                    ) from error
-
-    project_root_dir = (GENERATED_ROOT / project_id).resolve()
-
-    if project_root_dir.exists():
-        try:
-            await asyncio.to_thread(shutil.rmtree, project_root_dir)
-        except OSError as error:
-            raise HTTPException(
-                status_code=500,
-                detail=f"Failed to remove project workspace folder: {error}",
-            ) from error
-
-    delete_project_record(project_id)
-
-    return ProjectActionResponse(
-        projectId=project_id,
-        status="completed",
-        message="Project deleted.",
     )
 
 
@@ -773,23 +508,6 @@ async def get_workflow(workflow_id: str):
         )
 
     return WorkflowResponse(**workflow)
-
-
-@app.get(
-    "/api/projects/{project_id}/workflows",
-    response_model=WorkflowListResponse,
-)
-async def get_project_workflows(project_id: str):
-    _validate_project_id_or_400(project_id)
-
-    if get_project_record(project_id) is None:
-        raise HTTPException(status_code=404, detail="Project not found.")
-
-    workflows = list_workflow_records(project_id=project_id)
-
-    return WorkflowListResponse(
-        workflows=[WorkflowSummary(**workflow) for workflow in workflows],
-    )
 
 
 @app.post(
@@ -825,7 +543,6 @@ async def approve_workflow(
     background_tasks.add_task(
         run_approved_workflow_background,
         workflow_id,
-        workflow["projectId"],
         workflow["prompt"],
         requirements,
         architecture,
@@ -879,7 +596,6 @@ async def request_workflow_changes(
     background_tasks.add_task(
         run_change_request_background,
         workflow_id,
-        workflow["projectId"],
         workflow["prompt"],
         request.scope,
         feedback,

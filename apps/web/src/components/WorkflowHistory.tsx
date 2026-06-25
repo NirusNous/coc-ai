@@ -1,7 +1,7 @@
 import { useEffect, useState } from "react";
 import {
   getWorkflow,
-  listProjectWorkflows
+  listWorkflows
 } from "../api/workflows";
 import { useWorkflowStore } from "../store/workflowStore";
 import type { WorkflowSummary } from "../types/workflow";
@@ -17,9 +17,6 @@ function formatTimestamp(timestamp: string) {
 }
 
 export function WorkflowHistory() {
-  const selectedProjectId = useWorkflowStore(
-    (state) => state.selectedProjectId
-  );
   const workflowId = useWorkflowStore((state) => state.workflowId);
   const status = useWorkflowStore((state) => state.status);
   const previewAction = useWorkflowStore((state) => state.previewAction);
@@ -49,15 +46,7 @@ export function WorkflowHistory() {
       setIsLoading(true);
 
       try {
-        if (!selectedProjectId) {
-          if (!isCancelled) {
-            setWorkflows([]);
-            setError(null);
-          }
-          return;
-        }
-
-        const response = await listProjectWorkflows(selectedProjectId);
+        const response = await listWorkflows();
 
         if (!isCancelled) {
           setWorkflows(response.workflows);
@@ -83,7 +72,7 @@ export function WorkflowHistory() {
     return () => {
       isCancelled = true;
     };
-  }, [selectedProjectId, workflowId, status]);
+  }, [workflowId, status]);
 
   async function handleSelectWorkflow(selectedWorkflowId: string) {
     setLoadingWorkflowId(selectedWorkflowId);
@@ -109,16 +98,12 @@ export function WorkflowHistory() {
         <h2>Workflow History</h2>
       </div>
 
-      {!selectedProjectId ? (
-        <div className="emptyState">
-          Select a project to view its workflows.
-        </div>
-      ) : isLoading ? (
+      {isLoading ? (
         <div className="emptyState">Loading saved workflows...</div>
       ) : workflows.length === 0 ? (
         <div className="emptyState">
-          Workflows for the selected project will appear here after they are
-          saved by the backend.
+          Saved workflows will appear here after they are persisted by the
+          backend.
         </div>
       ) : (
         <div className="historyList">

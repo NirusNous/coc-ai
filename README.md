@@ -6,23 +6,23 @@ COC AI is a desktop-style PWA for generating frontend application workspaces fro
 
 - Frontend: React + TypeScript + Vite + Zustand
 - Backend: FastAPI + WebSockets + SQLite
-- Preview runners:
-  - Local runner
-  - Rancher-managed Kubernetes runner
+- Preview runner: Local runner
 - LLM integration:
   - Requirements Agent
   - Architecture Agent
   - Code Generation Agent
+  - Debug Agent
+  - Patch Agent
 
 ## What the app does
 
-1. Create or select a project.
-2. Submit a prompt.
-3. Generate requirements and architecture.
-4. Pause for architecture approval.
-5. Generate frontend files.
-6. Write the generated workspace to `generated/<project_id>/<workflow_id>/`.
-7. Run install, build, and preview validation through the active preview runner.
+1. Submit a prompt.
+2. Generate requirements and architecture.
+3. Pause for architecture approval.
+4. Generate frontend files.
+5. Write the generated workspace to `generated/<workflow_id>/`.
+6. Run install, build, and preview validation through the local preview runner.
+7. If validation fails, run Debug Agent and Patch Agent retries before giving up.
 8. Persist workflow history, logs, files, and preview metadata in SQLite.
 
 ## Run
@@ -55,18 +55,9 @@ LLM_BASE_URL="http://127.0.0.1:11434/v1"
 MAX_LLM_CONCURRENCY="1"
 MAX_OUTPUT_TOKENS="800"
 LLM_TIMEOUT_SECONDS="120"
-
-AGENTIC_OS_RUNNER="local"
-KUBECONFIG_PATH=""
-K8S_CONTEXT=""
-AGENTIC_OS_NAMESPACE_PREFIX="agentic-os"
-PREVIEW_EXPOSURE_MODE="port_forward"
-PREVIEW_BASE_DOMAIN=""
 ```
 
-## Preview runners
-
-### Local runner
+## Preview runner
 
 The local runner:
 
@@ -74,23 +65,6 @@ The local runner:
 - runs `pnpm run build`
 - starts the preview app
 - exposes preview control through the API
-
-### Rancher/Kubernetes runner
-
-The Kubernetes runner:
-
-- uses `kubectl` with the configured kubeconfig and context
-- creates one namespace per workflow
-- mounts the generated workspace through a ConfigMap
-- runs a Kubernetes Job for install and build validation
-- streams Kubernetes Job logs through the existing workflow log channel
-- marks the workflow as `install_failed`, `build_failed`, or `timeout` when cluster validation fails
-- creates a preview Deployment and Service only after the build Job succeeds
-- exposes the preview through either:
-  - `kubectl port-forward`
-  - Ingress
-
-If `kubectl config current-context` is not set, Kubernetes endpoints fail cleanly and the local runner remains available.
 
 ## Main API surface
 
@@ -102,28 +76,12 @@ If `kubectl config current-context` is not set, Kubernetes endpoints fail cleanl
 - `POST /api/workflows/{workflow_id}/approve`
 - `POST /api/workflows/{workflow_id}/request-changes`
 
-### Projects
-
-- `GET /api/projects`
-- `POST /api/projects`
-- `GET /api/projects/{project_id}`
-- `PATCH /api/projects/{project_id}`
-- `DELETE /api/projects/{project_id}`
-- `GET /api/projects/{project_id}/workflows`
-
 ### Preview control
 
 - `GET /api/previews`
 - `POST /api/workflows/{workflow_id}/preview/restart`
 - `DELETE /api/workflows/{workflow_id}/preview`
 - `DELETE /api/workflows/{workflow_id}/workspace`
-
-### Runner and Kubernetes helpers
-
-- `GET /api/runner`
-- `GET /api/kubernetes/namespaces`
-- `POST /api/kubernetes/test-namespace`
-- `DELETE /api/kubernetes/namespaces/{namespace}`
 
 ## Persistence
 
@@ -142,7 +100,6 @@ Persisted workflow data includes:
 - attempts
 - preview URL
 - workspace path
-- project association
 
 ## Test
 
@@ -162,21 +119,20 @@ python -m py_compile main.py app\\agents.py app\\workflow.py app\\config.py
 
 Recommended manual checks:
 
-1. Create a project.
-2. Start a workflow.
-3. Confirm requirements and architecture appear.
-4. Approve the architecture.
-5. Confirm files are generated and written to disk.
-6. Confirm the Build/Test Agent moves through install and build status.
+1. Start a workflow.
+2. Confirm requirements and architecture appear.
+3. Approve the architecture.
+4. Confirm files are generated and written to disk.
+5. Confirm the Build/Test Agent moves through install and build status.
+6. If validation fails, confirm the Debug Agent and Patch Agent run and the attempt counter advances.
 7. Confirm preview starts only after validation succeeds.
-8. Force an install or build failure and confirm the workflow stops with `install_failed` or `build_failed`.
+8. Force an install or build failure and confirm the workflow retries and eventually settles on success or a final failure state.
 9. Stop and restart the preview.
 10. Clean the workspace.
 11. Reload the page and confirm workflow history restores correctly.
-12. If using Kubernetes, confirm a valid `kubectl` context exists before testing the Kubernetes runner.
 
 ## Notes
 
 - Generated workspaces stay out of Git.
-- No Docker CLI is used.
+- No Docker or Kubernetes runner is used in this phase.
 - The app currently generates frontend-only applications.

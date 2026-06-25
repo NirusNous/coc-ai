@@ -41,6 +41,18 @@ function defaultAgentEvents(): AgentEvent[] {
       detail: "Waiting to validate install and build stages"
     },
     {
+      id: "debug",
+      name: "Debug Agent",
+      status: "pending",
+      detail: "Waiting to analyze any failed validation attempts"
+    },
+    {
+      id: "patch",
+      name: "Patch Agent",
+      status: "pending",
+      detail: "Waiting to rewrite files for retry attempts"
+    },
+    {
       id: "files",
       name: "File Writer",
       status: "pending",
@@ -156,6 +168,34 @@ function hydrateAgentEvents(workflow: WorkflowResponse): AgentEvent[] {
       "code",
       "completed",
       `${workflow.files.length} files generated`
+    );
+  }
+
+  if (workflow.attempts.some((attempt) => attempt.debugSummary)) {
+    const latestDebugAttempt = [...workflow.attempts]
+      .reverse()
+      .find((attempt) => attempt.debugSummary);
+
+    if (latestDebugAttempt?.debugSummary) {
+      agentEvents = updateAgent(
+        agentEvents,
+        "debug",
+        "completed",
+        latestDebugAttempt.debugSummary
+      );
+    }
+  }
+
+  if (workflow.attempts.length > 1) {
+    const patchDetail = workflow.isRetrying
+      ? `Preparing attempt ${workflow.currentAttempt}/${workflow.maxAttempts}`
+      : `Applied patches through attempt ${workflow.attempts.length}`;
+
+    agentEvents = updateAgent(
+      agentEvents,
+      "patch",
+      workflow.isRetrying ? "running" : "completed",
+      patchDetail
     );
   }
 
@@ -296,7 +336,6 @@ function hydrateAgentEvents(workflow: WorkflowResponse): AgentEvent[] {
 interface WorkflowStore {
   prompt: string;
   status: WorkflowStatus;
-  selectedProjectId?: string;
   workflowId?: string;
   requirements?: RequirementsSpec;
   architecture?: ArchitectureSpec;
@@ -314,7 +353,6 @@ interface WorkflowStore {
   agentEvents: AgentEvent[];
 
   setPrompt: (prompt: string) => void;
-  setSelectedProjectId: (projectId?: string) => void;
   resetWorkflow: () => void;
   beginSubmission: () => void;
   workflowQueued: (response: WorkflowStartResponse) => void;
@@ -334,7 +372,6 @@ interface WorkflowStore {
 export const useWorkflowStore = create<WorkflowStore>((set) => ({
   prompt: "",
   status: "idle",
-  selectedProjectId: undefined,
   workflowId: undefined,
   requirements: undefined,
   architecture: undefined,
@@ -342,7 +379,7 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
   files: [],
   attempts: [],
   currentAttempt: 1,
-  maxAttempts: 1,
+  maxAttempts: 3,
   isRetrying: false,
   logs: ["Workflow workspace ready."],
   previewUrl: undefined,
@@ -355,12 +392,6 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
     set({ prompt });
   },
 
-  setSelectedProjectId: (projectId) => {
-    set({
-      selectedProjectId: projectId
-    });
-  },
-
   resetWorkflow: () => {
     set({
       status: "idle",
@@ -371,7 +402,7 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
       files: [],
       attempts: [],
       currentAttempt: 1,
-      maxAttempts: 1,
+      maxAttempts: 3,
       isRetrying: false,
       logs: ["Workflow reset."],
       previewUrl: undefined,
@@ -404,7 +435,7 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
       files: [],
       attempts: [],
       currentAttempt: 1,
-      maxAttempts: 1,
+      maxAttempts: 3,
       isRetrying: false,
       previewUrl: undefined,
       previewPort: undefined,
@@ -418,10 +449,9 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
   workflowQueued: (response) => {
     set({
       status: "queued",
-      selectedProjectId: response.projectId,
       workflowId: response.workflowId,
       currentAttempt: 1,
-      maxAttempts: 1,
+      maxAttempts: 3,
       isRetrying: false,
       previewAction: null,
       logs: [
@@ -435,7 +465,6 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
     set({
       prompt: workflow.prompt,
       status: workflow.status,
-      selectedProjectId: workflow.projectId ?? undefined,
       workflowId: workflow.workflowId,
       requirements: workflow.requirements ?? undefined,
       architecture: workflow.architecture ?? undefined,
@@ -443,7 +472,7 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
       files: workflow.files ?? [],
       attempts: workflow.attempts ?? [],
       currentAttempt: workflow.currentAttempt ?? 1,
-      maxAttempts: workflow.maxAttempts ?? 1,
+      maxAttempts: workflow.maxAttempts ?? 3,
       isRetrying: workflow.isRetrying ?? false,
       logs: workflow.logs ?? [],
       previewUrl: workflow.previewUrl ?? undefined,
@@ -491,7 +520,6 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
       if (type === "workflow:started") {
         return {
           status: "running",
-          selectedProjectId: payload.projectId ?? state.selectedProjectId,
           approvalStage: payload.approvalStage ?? undefined,
           currentAttempt: payload.currentAttempt ?? state.currentAttempt,
           maxAttempts: payload.maxAttempts ?? state.maxAttempts,
@@ -509,7 +537,6 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
       if (type === "workflow:awaiting_approval") {
         return {
           status: "awaiting_approval",
-          selectedProjectId: payload.projectId ?? state.selectedProjectId,
           workflowId: payload.workflowId ?? state.workflowId,
           requirements: payload.requirements ?? state.requirements,
           architecture: payload.architecture ?? state.architecture,
@@ -554,6 +581,37 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
           currentAttempt: payload.attempt.attemptNumber,
           maxAttempts: payload.maxAttempts,
           isRetrying: payload.willRetry
+        };
+      }
+
+      if (type === "attempt:retrying") {
+        return {
+          status: "running",
+          currentAttempt: payload.nextAttemptNumber,
+          maxAttempts: payload.maxAttempts,
+          isRetrying: true,
+          logs: [...state.logs, payload.message],
+          agentEvents: updateAgent(
+            updateAgent(
+              updateAgent(
+                updateAgent(
+                  state.agentEvents,
+                  "debug",
+                  "completed",
+                  payload.debugSummary
+                ),
+                "patch",
+                "running",
+                `Preparing attempt ${payload.nextAttemptNumber}/${payload.maxAttempts}`
+              ),
+              "preview",
+              "pending",
+              "Waiting for retry validation to finish."
+            ),
+            "build",
+            "running",
+            `Preparing attempt ${payload.nextAttemptNumber}/${payload.maxAttempts}`
+          )
         };
       }
 
@@ -767,7 +825,6 @@ export const useWorkflowStore = create<WorkflowStore>((set) => ({
       if (type === "workflow:completed") {
         return {
           status: payload.status ?? "completed",
-          selectedProjectId: payload.projectId ?? state.selectedProjectId,
           workflowId: payload.workflowId ?? state.workflowId,
           requirements: payload.requirements ?? state.requirements,
           architecture: payload.architecture ?? state.architecture,

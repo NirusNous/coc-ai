@@ -28,16 +28,6 @@ class LLMSettings:
         return bool(self.model and self.base_url)
 
 
-@dataclass(frozen=True)
-class RunnerSettings:
-    runner: str
-    kubeconfig_path: str | None
-    k8s_context: str | None
-    namespace_prefix: str
-    preview_exposure_mode: str
-    preview_base_domain: str | None
-
-
 def _read_dotenv_value(name: str) -> str | None:
     raw_value = DOTENV_VALUES.get(name)
 
@@ -138,24 +128,4 @@ def get_llm_settings() -> LLMSettings:
             None,
             "MAX_OUTPUT_TOKENS",
         ),
-    )
-
-
-def get_runner_settings() -> RunnerSettings:
-    namespace_prefix = (
-        _read_dotenv_value("AGENTIC_OS_NAMESPACE_PREFIX")
-        or "agentic-os"
-    ).strip().lower()
-    preview_exposure_mode = (
-        _read_dotenv_value("PREVIEW_EXPOSURE_MODE")
-        or "port-forward"
-    ).strip().lower().replace("-", "_")
-
-    return RunnerSettings(
-        runner=(_read_dotenv_value("AGENTIC_OS_RUNNER") or "local").strip().lower(),
-        kubeconfig_path=_read_dotenv_value("KUBECONFIG_PATH"),
-        k8s_context=_read_dotenv_value("K8S_CONTEXT"),
-        namespace_prefix=namespace_prefix,
-        preview_exposure_mode=preview_exposure_mode,
-        preview_base_domain=_read_dotenv_value("PREVIEW_BASE_DOMAIN"),
     )

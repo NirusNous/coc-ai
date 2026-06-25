@@ -1,11 +1,10 @@
 from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class WorkflowRequest(BaseModel):
     prompt: str
-    projectId: str
 
 
 class WorkflowApprovalRequest(BaseModel):
@@ -84,7 +83,6 @@ class FileWriteResult(BaseModel):
 
 
 class WorkflowResponse(BaseModel):
-    projectId: str | None = None
     workflowId: str
     status: str
     prompt: str
@@ -96,28 +94,21 @@ class WorkflowResponse(BaseModel):
     previewUrl: str | None = None
     previewPort: int | None = None
     workspacePath: str | None = None
-    attempts: list[BuildAttempt] = []
+    attempts: list[BuildAttempt] = Field(default_factory=list)
     currentAttempt: int = 1
-    maxAttempts: int = 1
+    maxAttempts: int = 3
     isRetrying: bool = False
     createdAt: str | None = None
     updatedAt: str | None = None
 
 
 class WorkflowStartResponse(BaseModel):
-    projectId: str
     workflowId: str
     status: str
 
 
 class WorkflowActionResponse(BaseModel):
     workflowId: str
-    status: str
-    message: str
-
-
-class ProjectActionResponse(BaseModel):
-    projectId: str
     status: str
     message: str
 
@@ -146,7 +137,6 @@ class PreviewActionResponse(BaseModel):
 
 
 class WorkflowSummary(BaseModel):
-    projectId: str | None = None
     workflowId: str
     prompt: str
     status: str
@@ -158,51 +148,3 @@ class WorkflowSummary(BaseModel):
 
 class WorkflowListResponse(BaseModel):
     workflows: list[WorkflowSummary]
-
-
-class ProjectRequest(BaseModel):
-    name: str
-    description: str | None = None
-
-
-class ProjectUpdateRequest(BaseModel):
-    name: str | None = None
-    description: str | None = None
-
-
-class ProjectResponse(BaseModel):
-    projectId: str
-    name: str
-    description: str | None = None
-    workflowCount: int = 0
-    createdAt: str
-    updatedAt: str
-
-
-class ProjectListResponse(BaseModel):
-    projects: list[ProjectResponse]
-
-
-class RunnerConfigResponse(BaseModel):
-    runner: str
-    kubeconfigPath: str | None = None
-    k8sContext: str | None = None
-    namespacePrefix: str
-    previewExposureMode: str
-    previewBaseDomain: str | None = None
-
-
-class KubernetesNamespaceInfo(BaseModel):
-    name: str
-    status: str
-    createdAt: str | None = None
-
-
-class KubernetesNamespaceListResponse(BaseModel):
-    namespaces: list[KubernetesNamespaceInfo]
-
-
-class KubernetesNamespaceActionResponse(BaseModel):
-    namespace: str
-    status: str
-    message: str

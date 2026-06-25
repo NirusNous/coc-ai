@@ -2,9 +2,6 @@ import { useWorkflowStore } from "../store/workflowStore";
 
 export function StatusBar() {
   const status = useWorkflowStore((state) => state.status);
-  const selectedProjectId = useWorkflowStore(
-    (state) => state.selectedProjectId
-  );
   const workflowId = useWorkflowStore((state) => state.workflowId);
   const workspacePath = useWorkflowStore((state) => state.workspacePath);
   const previewUrl = useWorkflowStore((state) => state.previewUrl);
@@ -18,11 +15,6 @@ export function StatusBar() {
       <div>
         <span className="statusLabel">Status</span>
         <strong>{status}</strong>
-      </div>
-
-      <div>
-        <span className="statusLabel">Project</span>
-        <strong>{selectedProjectId ?? "none"}</strong>
       </div>
 
       <div>

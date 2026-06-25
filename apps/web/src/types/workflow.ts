@@ -93,7 +93,6 @@ export interface BuildAttempt {
 }
 
 export interface WorkflowResponse {
-  projectId?: string | null;
   workflowId: string;
   status: WorkflowStatus;
   prompt: string;
@@ -114,7 +113,6 @@ export interface WorkflowResponse {
 }
 
 export interface WorkflowStartResponse {
-  projectId: string;
   workflowId: string;
   status: "queued";
 }
@@ -138,22 +136,7 @@ export type RunnerFailureStatus =
   | "timeout"
   | "runtime_crashed";
 
-export interface PreviewInfo {
-  workflowId: string;
-  previewUrl: string;
-  previewPort?: number | null;
-  workspacePath: string;
-  pid?: number | null;
-  runner?: string | null;
-  namespace?: string | null;
-}
-
-export interface PreviewListResponse {
-  previews: PreviewInfo[];
-}
-
 export interface WorkflowSummary {
-  projectId?: string | null;
   workflowId: string;
   prompt: string;
   status: WorkflowStatus;
@@ -165,19 +148,6 @@ export interface WorkflowSummary {
 
 export interface WorkflowHistoryResponse {
   workflows: WorkflowSummary[];
-}
-
-export interface ProjectResponse {
-  projectId: string;
-  name: string;
-  description?: string | null;
-  workflowCount: number;
-  createdAt: string;
-  updatedAt: string;
-}
-
-export interface ProjectListResponse {
-  projects: ProjectResponse[];
 }
 
 export interface PreviewActionResponse {
@@ -209,7 +179,6 @@ export type WorkflowSocketEvent =
       "workflow:started",
       {
         workflowId: string;
-        projectId?: string;
         status: "running";
         currentAttempt?: number;
         maxAttempts?: number;

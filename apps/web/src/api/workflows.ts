@@ -1,9 +1,6 @@
 import type {
   ChangeRequestScope,
-  ProjectListResponse,
-  ProjectResponse,
   PreviewActionResponse,
-  PreviewListResponse,
   WorkflowActionResponse,
   WorkflowHistoryResponse,
   WorkflowResponse,
@@ -37,8 +34,7 @@ async function requestJson<T>(
 }
 
 export async function createWorkflow(
-  prompt: string,
-  projectId: string
+  prompt: string
 ): Promise<WorkflowStartResponse> {
   return requestJson<WorkflowStartResponse>("/api/workflows", {
     method: "POST",
@@ -46,8 +42,7 @@ export async function createWorkflow(
       "Content-Type": "application/json"
     },
     body: JSON.stringify({
-      prompt,
-      projectId
+      prompt
     })
   });
 }
@@ -56,38 +51,10 @@ export async function listWorkflows(): Promise<WorkflowHistoryResponse> {
   return requestJson<WorkflowHistoryResponse>("/api/workflows");
 }
 
-export async function listProjectWorkflows(
-  projectId: string
-): Promise<WorkflowHistoryResponse> {
-  return requestJson<WorkflowHistoryResponse>(
-    `/api/projects/${projectId}/workflows`
-  );
-}
-
 export async function getWorkflow(
   workflowId: string
 ): Promise<WorkflowResponse> {
   return requestJson<WorkflowResponse>(`/api/workflows/${workflowId}`);
-}
-
-export async function listProjects(): Promise<ProjectListResponse> {
-  return requestJson<ProjectListResponse>("/api/projects");
-}
-
-export async function createProject(
-  name: string,
-  description?: string
-): Promise<ProjectResponse> {
-  return requestJson<ProjectResponse>("/api/projects", {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json"
-    },
-    body: JSON.stringify({
-      name,
-      description
-    })
-  });
 }
 
 export async function approveWorkflow(
@@ -126,10 +93,6 @@ export async function requestWorkflowChanges(
       })
     }
   );
-}
-
-export async function listPreviews(): Promise<PreviewListResponse> {
-  return requestJson<PreviewListResponse>("/api/previews");
 }
 
 export async function restartWorkflowPreview(

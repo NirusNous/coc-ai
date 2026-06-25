@@ -5,6 +5,8 @@ from uuid import uuid4
 from app.agents import (
     architecture_agent,
     code_generation_agent,
+    debug_agent,
+    patch_agent,
     requirements_agent,
 )
 from app.config import GENERATED_ROOT
@@ -21,7 +23,7 @@ from app.services.file_writer import write_generated_files
 
 
 PublishEvent = Callable[[str, dict[str, Any]], Awaitable[None]]
-DEFAULT_MAX_ATTEMPTS = 1
+DEFAULT_MAX_ATTEMPTS = 3
 
 
 def _model_to_dict(model: Any) -> dict[str, Any]:
@@ -39,6 +41,24 @@ def _attempt_summary(
         return f"Attempt {attempt_number} succeeded."
 
     return f"Attempt {attempt_number} ended with {status}."
+
+
+def _fallback_debug_summary(
+    failure_type: str,
+    failure_logs: list[str],
+) -> str:
+    fallback_reasons = {
+        "install_failed": "Dependency installation failed before the app could build.",
+        "build_failed": "The generated app did not compile successfully.",
+        "preview_failed": "The preview server did not start successfully after the build.",
+        "timeout": "The runner exceeded its timeout while validating the generated app.",
+        "runtime_crashed": "The preview runtime exited before the app became ready.",
+    }
+    recent_log = next(
+        (line.strip() for line in reversed(failure_logs) if line.strip()),
+        "No runner logs were captured.",
+    )
+    return f"{fallback_reasons.get(failure_type, 'Runner validation failed.')} Latest output: {recent_log}"
 
 
 def _compose_change_prompt(
@@ -152,7 +172,6 @@ async def _run_architecture_stage(
 
 async def _emit_awaiting_approval(
     *,
-    project_id: str,
     workflow_id: str,
     prompt: str,
     requirements: RequirementsSpec,
@@ -161,7 +180,6 @@ async def _emit_awaiting_approval(
     emit: PublishEvent,
 ) -> WorkflowResponse:
     response = WorkflowResponse(
-        projectId=project_id,
         workflowId=workflow_id,
         status="awaiting_approval",
         prompt=prompt,
@@ -186,7 +204,6 @@ async def _emit_awaiting_approval(
 async def _run_generation_and_preview(
     *,
     prompt: str,
-    project_id: str,
     workflow_id: str,
     requirements: RequirementsSpec,
     architecture: ArchitectureSpec,
@@ -250,7 +267,6 @@ async def _run_generation_and_preview(
     await log("File Writer started.")
 
     file_write_result = write_generated_files(
-        project_id=project_id,
         workflow_id=workflow_id,
         files=files,
     )
@@ -272,12 +288,12 @@ async def _run_generation_and_preview(
         "writtenFiles": file_write_result.writtenFiles,
     })
 
-    workspace_dir = GENERATED_ROOT / project_id / workflow_id
+    workspace_dir = GENERATED_ROOT / workflow_id
     current_files: list[GeneratedFile] = files
     attempts: list[BuildAttempt] = []
 
-    # Each attempt delegates install/build/preview execution to the active runner
-    # so the workflow layer can stay agnostic to local versus Kubernetes preview.
+    # Each attempt delegates install/build/preview execution to the local runner
+    # so retries can focus on generated files instead of process orchestration.
     async def run_preview_attempt(
         attempt_number: int,
     ) -> PreviewRunResult:
@@ -329,50 +345,230 @@ async def _run_generation_and_preview(
         )
 
     attempt_number = 1
-    preview_result = await run_preview_attempt(attempt_number)
 
-    if preview_result.status == "preview_ready":
-        await log(f"{preview_runner.display_name} completed.")
-        await log(f"Preview ready: {preview_result.preview_url}")
+    while attempt_number <= max_attempts:
+        preview_result = await run_preview_attempt(attempt_number)
 
-        success_attempt = BuildAttempt(
+        if preview_result.status == "preview_ready":
+            await log(f"{preview_runner.display_name} completed.")
+            await log(f"Preview ready: {preview_result.preview_url}")
+
+            success_attempt = BuildAttempt(
+                attemptNumber=attempt_number,
+                status="preview_ready",
+                summary=_attempt_summary(attempt_number, "preview_ready"),
+                logs=preview_result.logs,
+            )
+            attempts.append(success_attempt)
+            await _emit_attempt_completed(
+                emit=emit,
+                attempt=success_attempt,
+                max_attempts=max_attempts,
+                will_retry=False,
+            )
+
+            await emit("agent:completed", {
+                "agentId": "preview",
+                "name": "Live Preview",
+                "detail": f"Preview ready at {preview_result.preview_url}",
+            })
+
+            await emit("preview:ready", {
+                "previewUrl": preview_result.preview_url,
+                "previewPort": preview_result.preview_port,
+                "attemptNumber": attempt_number,
+            })
+
+            response = WorkflowResponse(
+                workflowId=workflow_id,
+                status="preview_ready",
+                prompt=prompt,
+                requirements=requirements,
+                architecture=architecture,
+                approvalStage=None,
+                files=current_files,
+                logs=logs,
+                previewUrl=preview_result.preview_url,
+                previewPort=preview_result.preview_port,
+                workspacePath=file_write_result.workspacePath,
+                attempts=attempts,
+                currentAttempt=attempt_number,
+                maxAttempts=max_attempts,
+                isRetrying=False,
+            )
+
+            await emit("workflow:completed", _model_to_dict(response))
+            return response
+
+        detail = preview_result.error_message or "Preview validation failed."
+        await log(
+            f"{preview_runner.display_name} failed with status: {preview_result.status}"
+        )
+
+        failed_attempt = BuildAttempt(
             attemptNumber=attempt_number,
-            status="preview_ready",
-            summary=_attempt_summary(attempt_number, "preview_ready"),
+            status=preview_result.status,
+            summary=_attempt_summary(attempt_number, preview_result.status),
+            failureType=preview_result.status,
             logs=preview_result.logs,
         )
-        attempts.append(success_attempt)
+
+        if attempt_number < max_attempts:
+            await emit("agent:failed", {
+                "agentId": "preview",
+                "name": "Live Preview",
+                "detail": detail,
+            })
+
+            await emit("agent:started", {
+                "agentId": "debug",
+                "name": "Debug Agent",
+                "detail": f"Analyzing {preview_result.status} on attempt {attempt_number}/{max_attempts}",
+            })
+            await log("Debug Agent started.")
+
+            try:
+                debug_result = await debug_agent(
+                    prompt=prompt,
+                    requirements=requirements,
+                    architecture=architecture,
+                    failure_type=preview_result.status,
+                    failure_logs=preview_result.logs,
+                    log=log,
+                )
+                debug_summary = debug_result.summary
+            except Exception as error:
+                debug_summary = _fallback_debug_summary(
+                    preview_result.status,
+                    preview_result.logs,
+                )
+                await log(f"Debug Agent failed: {error}")
+                await log("Using fallback debug summary for retry.")
+
+            failed_attempt.debugSummary = debug_summary
+            await log("Debug Agent completed.")
+            await log(f"Debug summary: {debug_summary}")
+            await emit("agent:completed", {
+                "agentId": "debug",
+                "name": "Debug Agent",
+                "detail": debug_summary,
+            })
+
+            attempts.append(failed_attempt)
+            await _emit_attempt_completed(
+                emit=emit,
+                attempt=failed_attempt,
+                max_attempts=max_attempts,
+                will_retry=True,
+            )
+
+            retry_message = (
+                f"Attempt {attempt_number} failed with {preview_result.status}. "
+                f"Retrying with patched files."
+            )
+            await emit("attempt:retrying", {
+                "attemptNumber": attempt_number,
+                "nextAttemptNumber": attempt_number + 1,
+                "maxAttempts": max_attempts,
+                "message": retry_message,
+                "debugSummary": debug_summary,
+            })
+            await log(retry_message)
+
+            await emit("agent:started", {
+                "agentId": "patch",
+                "name": "Patch Agent",
+                "detail": f"Preparing attempt {attempt_number + 1}/{max_attempts}",
+            })
+            await log("Patch Agent started.")
+
+            patched_files = await patch_agent(
+                prompt=prompt,
+                requirements=requirements,
+                architecture=architecture,
+                previous_files=current_files,
+                failure_type=preview_result.status,
+                failure_logs=preview_result.logs,
+                debug_summary=debug_summary,
+                log=log,
+            )
+            current_files = patched_files
+
+            await log("Patch Agent completed.")
+            await log(f"Prepared {len(current_files)} files for retry.")
+            await emit("agent:completed", {
+                "agentId": "patch",
+                "name": "Patch Agent",
+                "detail": f"{len(current_files)} files patched for retry",
+            })
+
+            await emit("code:generated", {
+                "files": [_model_to_dict(file) for file in current_files],
+            })
+
+            await emit("agent:started", {
+                "agentId": "files",
+                "name": "File Writer",
+                "detail": "Rewriting patched files to disk",
+            })
+            await log("File Writer started.")
+
+            file_write_result = write_generated_files(
+                workflow_id=workflow_id,
+                files=current_files,
+                replace_existing=True,
+            )
+
+            await log("File Writer completed.")
+            await log(f"Workspace updated: {file_write_result.workspacePath}")
+
+            for written_file in file_write_result.writtenFiles:
+                await log(f"Wrote file: {written_file}")
+
+            await emit("agent:completed", {
+                "agentId": "files",
+                "name": "File Writer",
+                "detail": f"Files written to {file_write_result.workspacePath}",
+            })
+            await emit("files:written", {
+                "workspacePath": file_write_result.workspacePath,
+                "writtenFiles": file_write_result.writtenFiles,
+            })
+
+            attempt_number += 1
+            continue
+
+        await emit("agent:failed", {
+            "agentId": "preview",
+            "name": "Live Preview",
+            "detail": detail,
+        })
+
+        attempts.append(failed_attempt)
         await _emit_attempt_completed(
             emit=emit,
-            attempt=success_attempt,
+            attempt=failed_attempt,
             max_attempts=max_attempts,
             will_retry=False,
         )
 
-        await emit("agent:completed", {
-            "agentId": "preview",
-            "name": "Live Preview",
-            "detail": f"Preview ready at {preview_result.preview_url}",
-        })
-
-        await emit("preview:ready", {
-            "previewUrl": preview_result.preview_url,
-            "previewPort": preview_result.preview_port,
+        await emit("preview:failed", {
+            "status": preview_result.status,
+            "message": detail,
             "attemptNumber": attempt_number,
         })
 
         response = WorkflowResponse(
-            projectId=project_id,
             workflowId=workflow_id,
-            status="preview_ready",
+            status=preview_result.status,
             prompt=prompt,
             requirements=requirements,
             architecture=architecture,
             approvalStage=None,
             files=current_files,
             logs=logs,
-            previewUrl=preview_result.preview_url,
-            previewPort=preview_result.preview_port,
+            previewUrl=None,
+            previewPort=None,
             workspacePath=file_write_result.workspacePath,
             attempts=attempts,
             currentAttempt=attempt_number,
@@ -383,63 +579,11 @@ async def _run_generation_and_preview(
         await emit("workflow:completed", _model_to_dict(response))
         return response
 
-    detail = preview_result.error_message or "Preview validation failed."
-    await log(
-        f"{preview_runner.display_name} failed with status: {preview_result.status}"
-    )
-    await emit("agent:failed", {
-        "agentId": "preview",
-        "name": "Live Preview",
-        "detail": detail,
-    })
-
-    failed_attempt = BuildAttempt(
-        attemptNumber=attempt_number,
-        status=preview_result.status,
-        summary=_attempt_summary(attempt_number, preview_result.status),
-        failureType=preview_result.status,
-        logs=preview_result.logs,
-    )
-    attempts.append(failed_attempt)
-    await _emit_attempt_completed(
-        emit=emit,
-        attempt=failed_attempt,
-        max_attempts=max_attempts,
-        will_retry=False,
-    )
-
-    await emit("preview:failed", {
-        "status": preview_result.status,
-        "message": detail,
-        "attemptNumber": attempt_number,
-    })
-
-    response = WorkflowResponse(
-        projectId=project_id,
-        workflowId=workflow_id,
-        status=preview_result.status,
-        prompt=prompt,
-        requirements=requirements,
-        architecture=architecture,
-        approvalStage=None,
-        files=current_files,
-        logs=logs,
-        previewUrl=None,
-        previewPort=None,
-        workspacePath=file_write_result.workspacePath,
-        attempts=attempts,
-        currentAttempt=attempt_number,
-        maxAttempts=max_attempts,
-        isRetrying=False,
-    )
-
-    await emit("workflow:completed", _model_to_dict(response))
-    return response
+    raise RuntimeError("Workflow exited without producing a final preview state.")
 
 
 async def run_workflow_until_approval(
     prompt: str,
-    project_id: str,
     workflow_id: str | None = None,
     publish: PublishEvent | None = None,
 ) -> WorkflowResponse:
@@ -455,7 +599,6 @@ async def run_workflow_until_approval(
         await emit("log", {"message": message})
 
     await emit("workflow:started", {
-        "projectId": project_id,
         "workflowId": workflow_id,
         "status": "running",
         "currentAttempt": 1,
@@ -478,7 +621,6 @@ async def run_workflow_until_approval(
 
     await log("Architecture approval required before code generation.")
     return await _emit_awaiting_approval(
-        project_id=project_id,
         workflow_id=workflow_id,
         prompt=prompt,
         requirements=requirements,
@@ -491,7 +633,6 @@ async def run_workflow_until_approval(
 async def run_workflow_after_approval(
     *,
     prompt: str,
-    project_id: str,
     workflow_id: str,
     requirements: RequirementsSpec,
     architecture: ArchitectureSpec,
@@ -503,7 +644,6 @@ async def run_workflow_after_approval(
             await publish(event_type, payload)
 
     await emit("workflow:started", {
-        "projectId": project_id,
         "workflowId": workflow_id,
         "status": "running",
         "currentAttempt": 1,
@@ -521,7 +661,6 @@ async def run_workflow_after_approval(
 
     return await _run_generation_and_preview(
         prompt=prompt,
-        project_id=project_id,
         workflow_id=workflow_id,
         requirements=requirements,
         architecture=architecture,
@@ -533,7 +672,6 @@ async def run_workflow_after_approval(
 async def run_workflow_after_change_request(
     *,
     prompt: str,
-    project_id: str,
     workflow_id: str,
     change_scope: str,
     change_feedback: str,
@@ -551,7 +689,6 @@ async def run_workflow_after_change_request(
         await emit("log", {"message": message})
 
     await emit("workflow:started", {
-        "projectId": project_id,
         "workflowId": workflow_id,
         "status": "running",
         "currentAttempt": 1,
@@ -593,7 +730,6 @@ async def run_workflow_after_change_request(
 
     await log("Updated architecture is awaiting approval.")
     return await _emit_awaiting_approval(
-        project_id=project_id,
         workflow_id=workflow_id,
         prompt=prompt,
         requirements=requirements,

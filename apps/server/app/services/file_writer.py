@@ -23,22 +23,15 @@ def _validate_identifier(
         raise ValueError(f"Invalid {label}: {value}")
 
 
-def validate_project_id(project_id: str) -> None:
-    _validate_identifier(project_id, label="project ID")
-
-
 def _validate_workflow_id(workflow_id: str) -> None:
     _validate_identifier(workflow_id, label="workflow ID")
 
 
 def build_workspace_dir(
-    *,
-    project_id: str,
     workflow_id: str,
 ) -> Path:
-    validate_project_id(project_id)
     _validate_workflow_id(workflow_id)
-    return (GENERATED_ROOT / project_id / workflow_id).resolve()
+    return (GENERATED_ROOT / workflow_id).resolve()
 
 
 def _safe_target_path(workspace_dir: Path, generated_path: str) -> Path:
@@ -81,21 +74,16 @@ def _safe_target_path(workspace_dir: Path, generated_path: str) -> Path:
 
 
 def write_generated_files(
-    project_id: str,
     workflow_id: str,
     files: list[GeneratedFile],
     *,
     replace_existing: bool = False,
 ) -> FileWriteResult:
-    validate_project_id(project_id)
     _validate_workflow_id(workflow_id)
 
     GENERATED_ROOT.mkdir(parents=True, exist_ok=True)
 
-    workspace_dir = build_workspace_dir(
-        project_id=project_id,
-        workflow_id=workflow_id,
-    )
+    workspace_dir = build_workspace_dir(workflow_id)
 
     if replace_existing and workspace_dir.exists():
         shutil.rmtree(workspace_dir)
